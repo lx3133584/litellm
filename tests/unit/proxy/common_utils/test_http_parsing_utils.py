@@ -276,6 +276,30 @@ async def test_form_data_with_json_metadata():
 
 
 @pytest.mark.asyncio
+async def test_form_data_with_json_fallbacks():
+    """
+    Test that form data with a JSON-encoded fallbacks field is correctly parsed into a list.
+    """
+    mock_request = MagicMock()
+    test_data = {
+        "model": "primary",
+        "prompt": "a red square",
+        "fallbacks": '["backup"]',
+        "context_window_fallbacks": '["backup-ctx"]',
+    }
+    mock_request.form = AsyncMock(return_value=FormData(test_data))
+    mock_request.headers = {"content-type": "multipart/form-data"}
+    mock_request.scope = {}
+    mock_request.state._cached_headers = None
+
+    result = await read_request_body(mock_request)
+    assert result["fallbacks"] == ["backup"]
+    assert isinstance(result["fallbacks"], list)
+    assert result["context_window_fallbacks"] == ["backup-ctx"]
+    assert isinstance(result["context_window_fallbacks"], list)
+
+
+@pytest.mark.asyncio
 async def test_form_data_with_invalid_json_metadata():
     """
     Test that form data with invalid JSON in metadata field raises an exception.

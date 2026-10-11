@@ -237,8 +237,19 @@ async def read_request_body(request: Request | None) -> dict:
                     code=status.HTTP_400_BAD_REQUEST,
                 )
             parsed_body = dict(form_data)
-            if "metadata" in parsed_body and isinstance(parsed_body["metadata"], str):
-                parsed_body["metadata"] = json.loads(parsed_body["metadata"])
+            for json_field in (
+                "metadata",
+                "litellm_metadata",
+                "fallbacks",
+                "context_window_fallbacks",
+                "content_policy_fallbacks",
+            ):
+                if json_field in parsed_body and isinstance(parsed_body[json_field], str):
+                    try:
+                        parsed_body[json_field] = json.loads(parsed_body[json_field])
+                    except (json.JSONDecodeError, ValueError):
+                        if json_field == "metadata":
+                            raise
         else:
             # Read the request body
             body: Final = await request.body()

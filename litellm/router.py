@@ -7619,6 +7619,26 @@ class Router:
             # propagate so they remain visible.
             return None
 
+    @staticmethod
+    def _normalize_string_fallback_target(val: Any) -> list | None:
+        """
+        Coerces string fallbacks (e.g. from multipart form data or client overrides)
+        into a list or None, preventing character-by-character iteration.
+        """
+        if not isinstance(val, str):
+            return val
+        try:
+            parsed = json.loads(val)
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, dict):
+                return [parsed]
+            if parsed is None:
+                return None
+            return [str(parsed)]
+        except Exception:
+            return [val] if val else None
+
     async def async_function_with_fallbacks_common_utils(
         self,
         e: Exception,
@@ -7634,6 +7654,10 @@ class Router:
         """
         Common utilities for async_function_with_fallbacks
         """
+        fallbacks = self._normalize_string_fallback_target(fallbacks)
+        context_window_fallbacks = self._normalize_string_fallback_target(context_window_fallbacks)
+        content_policy_fallbacks = self._normalize_string_fallback_target(content_policy_fallbacks)
+
         if verbose_router_logger.isEnabledFor(logging.DEBUG):
             verbose_router_logger.debug("Traceback%s", redact_string(traceback.format_exc()))
         original_exception: Final = e
