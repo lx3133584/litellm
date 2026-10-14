@@ -236,3 +236,81 @@ class TestCallAgenticCompletionHooksWrapping:
         result = await _run_hooks(self.handler, logging_obj)
 
         assert isinstance(result, dict)
+
+
+class TestFakeAnthropicMessagesStreamIteratorLogging:
+    """Regression tests for issue #46093: FakeAnthropicMessagesStreamIterator
+    must be unwrapped during response logging and release parallel request slots
+    on stream completion."""
+
+    def test_handle_anthropic_messages_logging_unwraps_fake_stream(self):
+        import datetime
+        from litellm.litellm_core_utils.litellm_logging import Logging
+        from litellm.types.utils import ModelResponse
+
+        logging_obj = Logging(
+            model="claude-3-5-sonnet",
+            messages=[{"role": "user", "content": "search"}],
+            stream=True,
+            call_type="anthropic_messages",
+            start_time=datetime.datetime.now(),
+            litellm_call_id="call_test_123",
+            function_id="fn_test_123",
+        )
+        logging_obj.optional_params = {}
+        resp = {
+            "id": "msg_test_123",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-3-5-sonnet",
+            "content": [{"type": "text", "text": "searched web results"}],
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {"input_tokens": 15, "output_tokens": 8},
+        }
+        fake_stream = FakeAnthropicMessagesStreamIterator(resp)
+        logged = logging_obj._handle_anthropic_messages_response_logging(fake_stream)
+
+        assert isinstance(logged, ModelResponse)
+        assert logged.choices[0].message.content == "searched web results"
+        assert logged.usage.prompt_tokens == 15
+        assert logged.usage.completion_tokens == 8
+
+    @pytest.mark.asyncio
+    async def test_finalize_cleanup_releases_slot_on_fake_stream_completion(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from litellm.proxy.common_request_processing import ProxyBaseLLMRequestProcessing
+
+        resp = _anthropic_response()
+        resp["model"] = "claude-3-5-sonnet"
+        resp["stop_sequence"] = None
+        fake_stream = FakeAnthropicMessagesStreamIterator(resp)
+
+        deferred_cb = AsyncMock()
+        logging_obj = MagicMock()
+        logging_obj._on_deferred_stream_complete = deferred_cb
+        logging_obj.dispatch_success_handlers = AsyncMock()
+
+        proxy_logging_obj = MagicMock()
+        proxy_logging_obj.arelease_max_parallel_requests_on_disconnect = AsyncMock()
+
+        request_data = {
+            "litellm_logging_obj": logging_obj,
+            "litellm_call_id": "call_test_fake_stream",
+        }
+        user_api_key_dict = MagicMock()
+
+        await ProxyBaseLLMRequestProcessing.finalize_streaming_generator_cleanup(
+            request=None,
+            request_data=request_data,
+            response=fake_stream,
+            stream_completed=True,
+            client_disconnected=False,
+            user_api_key_dict=user_api_key_dict,
+            proxy_logging_obj=proxy_logging_obj,
+        )
+
+        assert deferred_cb.called is True
+        assert deferred_cb.call_args[0][0] == resp
+        assert proxy_logging_obj.arelease_max_parallel_requests_on_disconnect.called is True
+

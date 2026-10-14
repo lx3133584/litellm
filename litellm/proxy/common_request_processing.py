@@ -3998,6 +3998,55 @@ class ProxyBaseLLMRequestProcessing:
                     and user_api_key_dict is not None
                 ):
                     await proxy_logging_obj.arelease_max_parallel_requests_on_disconnect(user_api_key_dict)
+            elif stream_completed:
+                from litellm.llms.anthropic.pass_through.messages.fake_stream_iterator import (
+                    FakeAnthropicMessagesStreamIterator,
+                )
+                from litellm.router_utils.add_retry_fallback_headers import (
+                    HiddenParamsAsyncIteratorWrapper,
+                )
+
+                unwrapped_response: Final = (
+                    response.inner
+                    if isinstance(response, HiddenParamsAsyncIteratorWrapper)
+                    else response
+                )
+                if isinstance(unwrapped_response, FakeAnthropicMessagesStreamIterator):
+                    fake_logging_obj = request_data.get("litellm_logging_obj")
+                    deferred_cb = (
+                        getattr(fake_logging_obj, "_on_deferred_stream_complete", None)
+                        if fake_logging_obj is not None
+                        else None
+                    )
+                    if deferred_cb is not None:
+                        fake_logging_obj._on_deferred_stream_complete = None
+                        try:
+                            await deferred_cb(unwrapped_response.response, False)
+                        except Exception as e:
+                            verbose_proxy_logger.error(
+                                "Error calling deferred stream complete for FakeAnthropicMessagesStreamIterator: %s",
+                                e,
+                            )
+                    elif fake_logging_obj is not None and hasattr(fake_logging_obj, "dispatch_success_handlers"):
+                        try:
+                            await fake_logging_obj.dispatch_success_handlers(
+                                result=unwrapped_response.response,
+                                cache_hit=False,
+                                prefer_async_handlers=True,
+                            )
+                        except Exception as e:
+                            verbose_proxy_logger.error(
+                                "Error dispatching success handlers for FakeAnthropicMessagesStreamIterator: %s",
+                                e,
+                            )
+                    if proxy_logging_obj is not None and user_api_key_dict is not None:
+                        try:
+                            await proxy_logging_obj.arelease_max_parallel_requests_on_disconnect(user_api_key_dict)
+                        except Exception as e:
+                            verbose_proxy_logger.error(
+                                "Error releasing parallel request slot for FakeAnthropicMessagesStreamIterator: %s",
+                                e,
+                            )
 
             if hasattr(response, "aclose"):
                 try:

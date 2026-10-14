@@ -4278,6 +4278,12 @@ class Logging(LiteLLMLoggingBaseClass):
             (ResponseCompletedEvent, ResponseIncompleteEvent, ResponseFailedEvent),
         ):
             result = result.response
+        from litellm.llms.anthropic.pass_through.messages.fake_stream_iterator import (
+            FakeAnthropicMessagesStreamIterator,
+        )
+
+        if isinstance(result, FakeAnthropicMessagesStreamIterator):
+            result = result.response
         if isinstance(result, ResponsesAPIResponse):
             return self._translate_responses_api_response_to_model_response(result)
 
